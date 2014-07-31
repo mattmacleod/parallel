@@ -286,13 +286,13 @@ module Parallel
 
     def create_workers(items, options, &block)
       workers = []
-      Array.new(options[:count]).each do
-        workers << worker(items, options.merge(:started_workers => workers), &block)
+      Array.new(options[:count]).each_with_index do |_,i|
+        workers << worker(items, options.merge(:started_workers => workers), i, &block)
       end
       workers
     end
 
-    def worker(items, options, &block)
+    def worker(items, options, i, &block)
       # use less memory on REE
       GC.copy_on_write_friendly = true if GC.respond_to?(:copy_on_write_friendly=)
 
@@ -306,7 +306,7 @@ module Parallel
           parent_write.close
           parent_read.close
 
-          process_incoming_jobs(child_read, child_write, items, options, &block)
+          process_incoming_jobs(child_read, child_write, items, options, i, &block)
         ensure
           child_read.close
           child_write.close
@@ -319,11 +319,11 @@ module Parallel
       Worker.new(parent_read, parent_write, pid)
     end
 
-    def process_incoming_jobs(read, write, items, options, &block)
+    def process_incoming_jobs(read, write, items, options, i, &block)
       while !read.eof?
         index = Marshal.load(read)
         result = begin
-          call_with_index(items, index, options, &block)
+          call_with_index(items, index, options, i, &block)
         rescue StandardError => e
           ExceptionWrapper.new(e)
         end
@@ -390,9 +390,10 @@ module Parallel
       end
     end
 
-    def call_with_index(array, index, options, &block)
+    def call_with_index(array, index, options, i, &block)
       args = [array[index]]
       args << index if options[:with_index]
+      args << i if options[:with_worker_index]
       if options[:preserve_results] == false
         block.call(*args)
         nil # avoid GC overhead of passing large results around
